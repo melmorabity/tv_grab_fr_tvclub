@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-# Copyright 2017 Mohamed El Morabity
+# Copyright 2017-2018 Mohamed El Morabity
 #
 # This program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -17,8 +17,7 @@
 # this program. If not, see <http://www.gnu.org/licenses/>.
 
 
-"""tv_grab_fr_tvclub.py - Grab television listings for TVClub in XMLTV
-format."""
+"""tv_grab_fr_tvclub.py - Grab television listings for TVClub in XMLTV format."""
 
 import argparse
 import datetime
@@ -32,15 +31,18 @@ from urllib.request import Request
 
 import lxml.etree
 from lxml.etree import Element, ElementTree, XMLParser
+import pytz.reference
 
 
 class TVClubXMLTVGrabber:
-    """Implements grabbing and processing functionalities required to generate
-    XMLTV data for TVClub.
+    """Implements grabbing and processing functionalities required to generate XMLTV data for
+    TVClub.
     """
 
     _XMLTV_URL = 'http://guide.tvclub.fr/tvguide.xml'
     _XMLTV_DATETIME_FORMAT = '%Y%m%d%H%M%S %z'
+
+    _TVCLUB_TIMEZONE = pytz.timezone('Europe/Paris')
 
     _MAX_DAYS = 5
 
@@ -49,6 +51,7 @@ class TVClubXMLTVGrabber:
         'Clips': 'Music / Ballet / Dance',
         'Dessin animé': 'Cartoons / Puppets',
         'Emission': '',
+        'Feuilleton': 'Movie / Drama',
         'Spectacle': 'Performing arts',
         'Série': 'Movie / Drama',
         'Téléfilm': 'Movie / Drama'
@@ -101,15 +104,10 @@ class TVClubXMLTVGrabber:
         self._logger.debug('Retrieveing URL %s', self._XMLTV_URL)
         request = Request(self._XMLTV_URL)
         with urllib.request.urlopen(request) as response:
-            return lxml.etree.fromstring(
-                response.read(),
-                parser=XMLParser(remove_blank_text=True)
-            )
+            return lxml.etree.fromstring(response.read(), parser=XMLParser(remove_blank_text=True))
 
     def _retrieve_available_channels(self):
-        """Retrieve all available channels, identified by their XMLTV ID, from
-        TVClub.
-        """
+        """Retrieve all available channels, identified by their XMLTV ID, from TVClub."""
 
         self._logger.debug('Getting available channels')
 
@@ -123,9 +121,7 @@ class TVClubXMLTVGrabber:
         return channels
 
     def get_available_channels(self):
-        """Return the list of all available channels from TVClub, as a
-        dictionary.
-        """
+        """Return the list of all available channels from TVClub, as a dictionary."""
 
         return self._channels
 
@@ -134,9 +130,7 @@ class TVClubXMLTVGrabber:
 
         etsi_category = self._ETSI_PROGRAM_CATEGORIES.get(category)
         if etsi_category is None:
-            self._logger.warning(
-                'TVClub category %s has no defined ETSI equivalent', category
-            )
+            self._logger.warning('TVClub category %s has no defined ETSI equivalent', category)
 
         return etsi_category
 
@@ -148,8 +142,8 @@ class TVClubXMLTVGrabber:
     def _update_program_xmltv(self, program_xml):
         """Fix a TVClub program XML Element to comply the XMLTV standard."""
 
-        # Although TVClub programs are supposed to be encoded in UTF-8, some
-        # texts may be encoded in Windows-1252
+        # Although TVClub programs are supposed to be encoded in UTF-8, some texts may be encoded in
+        # Windows-1252
 
         for text in 'title', 'sub-title', 'desc':
             xml = program_xml.find(text)
@@ -179,36 +173,27 @@ class TVClubXMLTVGrabber:
 
     @staticmethod
     def _get_program_id(program_xml):
-        """Generate a unique ID for a XMLTV program, based on its channel, its
-        start and stop times, and its title.
-        """
+        """Generate a unique ID for a XMLTV program, based on its channel, its start and stop times,
+        and its title.  """
 
         return '{}|{}|{}|{}'.format(program_xml.get('channel', ''),
                                     program_xml.get('start', ''),
                                     program_xml.get('stop', ''),
                                     program_xml.findtext('title', ''))
 
-    def _get_xmltv_data(self, xmltv_ids, days=1, offset=0,
-                        channels_only=False):
-        """Get TVClub program data in XMLTV format as XML ElementTree
-        object.
-        """
+    def _get_xmltv_data(self, xmltv_ids, days=1, offset=0):
+        """Get TVClub program data in XMLTV format as XML ElementTree object.  """
 
         if days + offset > self._MAX_DAYS:
-            self._logger.warning(
-                'Grabber can only fetch programs up to %i days in the future.',
-                self._MAX_DAYS
-            )
+            self._logger.warning('Grabber can only fetch programs up to %i days in the future.',
+                                 self._MAX_DAYS)
             days = min(self._MAX_DAYS - offset, self._MAX_DAYS)
 
         root_xml = Element(
             'tv',
-            attrib={
-                'source-info-name': 'TVClub',
-                'source-info-url': 'http://forum.tvclub.fr/programmes-epg/'
-                                   'index.php',
-                'source-data-url': self._XMLTV_URL
-            }
+            attrib={'source-info-name': 'TVClub',
+                    'source-info-url': 'http://forum.tvclub.fr/programmes-epg/index.php',
+                    'source-data-url': self._XMLTV_URL}
         )
         if self._generator is not None:
             root_xml.set('generator-info-name', self._generator)
@@ -220,47 +205,40 @@ class TVClubXMLTVGrabber:
             if channel_xml.get('id') in xmltv_ids:
                 root_xml.append(channel_xml)
 
-        if not channels_only:
-            program_ids = []
-            first_day = datetime.date.today() + datetime.timedelta(days=offset)
-            last_day = (datetime.date.today() +
-                        datetime.timedelta(days=days + offset - 1))
-            for program_xml in self._xmltv.iter(tag='programme'):
-                # TVClub data contain programs starting between 5:00 AM and
-                # 4:59 AM 4 days later. Ignore programs outside the fetch
-                # range.
-                stop = datetime.datetime.strptime(
-                    program_xml.get('stop'),
-                    self._XMLTV_DATETIME_FORMAT
-                ).date()
-                start = datetime.datetime.strptime(
-                    program_xml.get('start'),
-                    self._XMLTV_DATETIME_FORMAT
-                ).date()
-                if stop < first_day or start > last_day:
-                    continue
+        program_ids = []
+        start = datetime.datetime.combine(datetime.date.today(), datetime.time(0),
+                                          tzinfo=pytz.reference.LocalTimezone())
+        start = start + datetime.timedelta(days=offset)
+        stop = start + datetime.timedelta(days=days)
 
-                # Ignore duplicate programs
-                program_id = self._get_program_id(program_xml)
-                if program_id in program_ids:
-                    continue
-                program_ids.append(program_id)
+        for program_xml in self._xmltv.iter(tag='programme'):
+            # TVClub data contain programs starting between 5:00 AM and 4:59 AM 4 days later. Ignore
+            # programs outside the fetch range.
+            program_start = datetime.datetime.strptime(program_xml.get('start'),
+                                                       self._XMLTV_DATETIME_FORMAT)
+            program_stop = datetime.datetime.strptime(program_xml.get('stop'),
+                                                      self._XMLTV_DATETIME_FORMAT)
+            if program_stop < start or program_start > stop:
+                continue
 
-                self._update_program_xmltv(program_xml)
-                root_xml.append(program_xml)
+            # Ignore duplicate programs
+            program_id = self._get_program_id(program_xml)
+            if program_id in program_ids:
+                continue
+            program_ids.append(program_id)
+
+            self._update_program_xmltv(program_xml)
+            root_xml.append(program_xml)
 
         return ElementTree(root_xml)
 
-    def write_xmltv(self, xmltv_ids, output_file, days=1, offset=0,
-                    channels_only=False):
+    def write_xmltv(self, xmltv_ids, output_file, days=1, offset=0):
         """Grab TVClub programs in XMLTV format and write them to file."""
 
         self._logger.debug('Writing XMLTV program to file %s', output_file)
 
-        xmltv_data = self._get_xmltv_data(xmltv_ids, days, offset,
-                                          channels_only)
-        xmltv_data.write(output_file, encoding='UTF-8', xml_declaration=True,
-                         pretty_print=True)
+        xmltv_data = self._get_xmltv_data(xmltv_ids, days, offset)
+        xmltv_data.write(output_file, encoding='UTF-8', xml_declaration=True, pretty_print=True)
 
 
 _PROGRAM = 'tv_grab_fr_tvclub'
@@ -305,37 +283,28 @@ def _parse_cli_args():
     )
     parser.add_argument('--description', action='store_true',
                         help='print the description for this grabber')
-    parser.add_argument('--version', action='store_true',
-                        help='show the version of this grabber')
+    parser.add_argument('--version', action='store_true', help='show the version of this grabber')
     parser.add_argument('--capabilities', action='store_true',
                         help='show the capabilities this grabber supports')
     parser.add_argument(
         '--configure', action='store_true',
-        help='generate the configuration file by asking the users which '
-             'channels to grab'
+        help='generate the configuration file by asking the users which channels to grab'
     )
-    parser.add_argument(
-        '--days', type=int, default=_DEFAULT_DAYS,
-        help='grab DAYS days of TV data (default: %(default)s)'
-    )
+    parser.add_argument('--days', type=int, default=_DEFAULT_DAYS,
+                        help='grab DAYS days of TV data (default: %(default)s)')
     parser.add_argument(
         '--offset', type=int, default=_DEFAULT_OFFSET,
-        help='grab TV data starting at OFFSET days in the future (default: '
-             '%(default)s)'
+        help='grab TV data starting at OFFSET days in the future (default: %(default)s)'
     )
-    parser.add_argument(
-        '--output', default=_DEFAULT_OUTPUT,
-        help='write the XML data to OUTPUT instead of the standard output'
-    )
+    parser.add_argument('--output', default=_DEFAULT_OUTPUT,
+                        help='write the XML data to OUTPUT instead of the standard output')
     parser.add_argument(
         '--config-file', default=_DEFAULT_CONFIG_FILE,
-        help='file name to write/load the configuration to/from (default: '
-             '%(default)s)'
+        help='file name to write/load the configuration to/from (default: %(default)s)'
     )
     parser.add_argument(
         '--list-channels', action='store_true',
-        help='output a list of all channels that data is available for (in '
-             'xmltv format)'
+        help='output a list of all channels that data is available for (in xmltv format)'
     )
 
     log_level_group = parser.add_mutually_exclusive_group()
@@ -343,8 +312,7 @@ def _parse_cli_args():
                                  help='only print error-messages on STDERR')
     log_level_group.add_argument(
         '--debug', action='store_true',
-        help='provide more information on progress to stderr to help in '
-             'debugging'
+        help='provide more information on progress to stderr to help in debugging'
     )
 
     return parser.parse_args()
@@ -376,9 +344,7 @@ def _write_configuration(xmltv_ids, config_file=_DEFAULT_CONFIG_FILE):
 
 
 def _configure(available_channels, config_file=_DEFAULT_CONFIG_FILE):
-    """Prompt channels to configure and write them into the configuration
-    file.
-    """
+    """Prompt channels to configure and write them into the configuration file."""
 
     xmltv_ids = []
     answers = ['yes', 'no', 'all', 'none']
@@ -390,17 +356,12 @@ def _configure(available_channels, config_file=_DEFAULT_CONFIG_FILE):
         display_name = available_channels[xmltv_id]['display_name']
         if not select_all and not select_none:
             while True:
-                prompt = '{} [{} (default=no)] '.format(display_name,
-                                                        ','.join(answers))
+                prompt = '{} [{} (default=no)] '.format(display_name, ','.join(answers))
                 answer = input(prompt).strip()
                 if answer in answers or answer == '':
                     break
-                print(
-                    'invalid response, please choose one of {}'.format(
-                        ','.join(answers)
-                    ),
-                    file=sys.stderr
-                )
+                print('invalid response, please choose one of {}'.format(','.join(answers)),
+                      file=sys.stderr)
             select_all = answer == 'all'
             select_none = answer == 'none'
         if select_all or answer == 'yes':
@@ -442,8 +403,7 @@ def _main():
 
     logger.setLevel(log_level)
 
-    tvclub = TVClubXMLTVGrabber(generator=_PROGRAM, generator_url=__url__,
-                                logger=logger)
+    tvclub = TVClubXMLTVGrabber(generator=_PROGRAM, generator_url=__url__, logger=logger)
     available_channels = tvclub.get_available_channels()
 
     logger.info('Using configuration file %s', args.config_file)
@@ -453,20 +413,15 @@ def _main():
         sys.exit()
 
     if not os.path.isfile(args.config_file):
-        logger.error(
-            'You need to configure the grabber by running it with --configure'
-        )
+        logger.error('You need to configure the grabber by running it with --configure')
         sys.exit(1)
 
     xmltv_ids = _read_configuration(args.config_file)
     if not xmltv_ids:
-        logger.error(
-            'Configuration file %s is empty, delete and run with --configure',
-            args.config_file
-        )
+        logger.error('Configuration file %s is empty, delete and run with --configure',
+                     args.config_file)
 
-    tvclub.write_xmltv(xmltv_ids, args.output, days=args.days,
-                       offset=args.offset, channels_only=args.list_channels)
+    tvclub.write_xmltv(xmltv_ids, args.output, days=args.days, offset=args.offset)
 
 if __name__ == '__main__':
     _main()
